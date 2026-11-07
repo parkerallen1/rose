@@ -802,7 +802,7 @@ class Server:
         self.mode = "ui-only" if args.ui_only else "live"
         self.bus = Bus()
         self.transcripts = None
-        if getattr(args, 'brain', 'local') == 'codex':
+        if getattr(args, 'brain', 'local') in ('codex', 'claude'):
             from .transcripts import Transcripts
             self.transcripts = Transcripts(getattr(args, 'transcript_dir', None))
         # --phone real: the user's Android phone through Rose Agent (rose/realphone.py), not the fake one.
@@ -881,7 +881,7 @@ class Server:
     def _load(self) -> None:
         t0 = time.monotonic()
         try:
-            codex = getattr(self.args, 'brain', 'local') == 'codex'
+            codex = getattr(self.args, 'brain', 'local') in ('codex', 'claude')
             cloud = getattr(self.args, 'cloud_audio', None)
             if cloud:
                 from .cloud_audio import prepare
@@ -918,7 +918,12 @@ class Server:
                 self._step("speaker", f"Loading the voice ({self.voice})", lambda: self.speaker.load(self.voice))
             if codex:
                 from .codex_conductor import CodexConductor
-                self.conductor = CodexConductor(self.phone, self.bus, self.speaker, self.transcripts)
+                if self.args.brain == 'claude':
+                    from .codex_client import ClaudeClient
+                    self.conductor = CodexConductor(self.phone, self.bus, self.speaker, self.transcripts,
+                                                    model='claude', client_factory=ClaudeClient)
+                else:
+                    self.conductor = CodexConductor(self.phone, self.bus, self.speaker, self.transcripts)
                 self.tasks = self.conductor
             else:
                 self.tasks = TaskManager(rt, self.task_brain, self.phone, self.bus, on_done=self._on_task_done)
@@ -938,9 +943,9 @@ class Server:
             print(f"[rose] ready in {seconds} s", flush=True)
             self.bus.emit("ready", seconds=seconds, load_s=dict(self.load_s))
         except Exception as exc:
-            if getattr(self.args, 'brain', 'local') != 'codex':
+            if getattr(self.args, 'brain', 'local') not in ('codex', 'claude'):
                 traceback.print_exc()
-            self.bus.emit("error", message=f"startup failed: {type(exc).__name__}; check Codex ChatGPT login and Terra Fast availability" if codex else f"startup failed: {type(exc).__name__}: {exc}")
+            self.bus.emit("error", message=(f"startup failed: {type(exc).__name__}; check the Claude Code subscription login (claude /login)" if self.args.brain == 'claude' else f"startup failed: {type(exc).__name__}; check Codex ChatGPT login and Terra Fast availability") if codex else f"startup failed: {type(exc).__name__}: {exc}")
             self.bus.emit("status", state="loading",
                           detail=f"Startup failed ({type(exc).__name__}); see the server log")
 
@@ -1396,7 +1401,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python -m rose.app", description="Rose v3 voice assistant server.")
     p.add_argument("--brain", default="local",
                    help="local (default: $ROSE_BRAIN or brain.REPO), an MLX model for Rose's conversation, "
-                        "or codex: GPT 6.1 Terra Fast via Sign in with ChatGPT")
+                        "codex: GPT 6.1 Terra Fast via Sign in with ChatGPT, "
+                        "or claude: Claude via the local Claude Code subscription login")
     p.add_argument("--transcript-dir", help="durable private transcript directory (Codex mode)")
     p.add_argument("--cloud-audio", help="Linux voice provider JSON with existing local model paths")
     p.add_argument("--pair-host", action="append", default=[], help="Tailscale MagicDNS/IPv4 host for the shared QR; repeatable")
@@ -1421,8 +1427,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="MLX model for the phone agent and thinker (default $ROSE_TASK_BRAIN, else --brain)")
     p.add_argument("--log-level", default="warning")
     args = p.parse_args(argv)
-    if args.cloud_audio and args.brain != 'codex':
-        p.error('--cloud-audio requires --brain codex')
+    if args.cloud_audio and args.brain not in ('codex', 'claude'):
+        p.error('--cloud-audio requires --brain codex or claude')
     from .remote import configured_hosts
     try:
         args.pair_host = configured_hosts(args.pair_host)

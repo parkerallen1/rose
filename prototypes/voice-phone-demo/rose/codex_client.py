@@ -82,3 +82,10 @@ class CodexClient:
             self.process.wait(timeout=5)
         self.reader.join(timeout=5)
         self.process.stdout.close()
+
+
+def ClaudeClient(on_event):
+    """The same stdio protocol, served by Claude through the local Claude Code subscription login."""
+    root = Path(__file__).resolve().parents[3]
+    bridge = root / 'workspace' / 'rose-agent' / 'server' / 'claude' / 'claude-voice-bridge.mjs'
+    return CodexClient(on_event, command=[os.environ.get('ROSE_BUN_BIN', 'bun'), str(bridge)])
